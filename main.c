@@ -13,7 +13,7 @@
 #include"threadpool.h"
 #include"http_conn.h"
 #include"LST_TIMER.h"
-#define TIMESLOT 5
+#define TIMESLOT 10
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
 extern int addfd(int epollfd,int fd,bool one_shot);
