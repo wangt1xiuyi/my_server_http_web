@@ -8,14 +8,20 @@
 #include<stdlib.h>
 #include<cassert>
 #include<sys/epoll.h>
+#include<time.h>
 #include"locker.h"
 #include"threadpool.h"
 #include"http_conn.h"
-
+#include"LST_TIMER.h"
+#define TIMESLOT 5
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
 extern int addfd(int epollfd,int fd,bool one_shot);
 extern int remove(int epollfd,int fd);
+extern int setnonblocking(int fd);
+static int pipefd[2];
+static int epollfd=0;
+static sort_timer_lst timer_lst;
 void addsig(int sig,void(handler)(int),bool restart=true)
 {
     struct sigaction sa;
@@ -25,6 +31,23 @@ void addsig(int sig,void(handler)(int),bool restart=true)
         sa.sa_flags |= SA_RESTART;
     sigfillset(&sa.sa_mask);
     assert(sigaction(sig,&sa,NULL)!=-1);
+}
+void sig_handler(int sig){
+    int save_errno=errno;
+    int msg=sig;
+    send(pipefd[1],(char *)&msg,1,0);
+    errno=save_errno;
+}
+void timer_handler(){
+    timer_lst.tick();
+    alarm(TIMESLOT);
+}
+//定时回调函数，删除非活动连接socket上的注册事件，并关闭之
+void cb_func(client_data* user_data){
+    epoll_ctl(epollfd,EPOLL_CTL_DEL,user_data->sockfd,0);
+    assert(user_data);
+    close(user_data->sockfd);
+    printf("close fd %d\n",user_data->sockfd);
 }
 void show_error(int connfd,const char* info)
 {
@@ -71,8 +94,19 @@ int main(int argc,char *argv[])
     int epollfd=epoll_create(5);
     assert(epollfd!=-1);
     addfd(epollfd,listenfd,false);
+    ret=socketpair(PF_UNIX,SOCK_STREAM,0,pipefd);
+    assert(ret!=-1);
+    setnonblocking(pipefd[1]);
+    addfd(epollfd,pipefd[0],false);
+    /*设置信号处理函数*/
+    addsig(SIGALRM,sig_handler,false);
+    addsig(SIGTERM,sig_handler,false);
+    client_data *users_clock=new client_data[MAX_FD];
+    bool timeout=false;
+    alarm(TIMESLOT);
     http_conn::m_epollfd=epollfd;
-    while(true)
+    bool stop_server=false;
+    while(!stop_server)
     {
         int number=epoll_wait(epollfd,events,MAX_EVENT_NUMBER,-1);
         if(number<0&&errno!=EINTR)
@@ -99,34 +133,89 @@ int main(int argc,char *argv[])
                     continue;
                 }
                 users[connfd].init(connfd,client_address);
+                users_clock[connfd].sockfd=connfd;
+                util_timer* timer=new util_timer;
+                timer->user_data=&users_clock[connfd];
+                timer->cb_func=cb_func;
+                time_t cur=time(NULL);
+                timer->expire=cur+3*TIMESLOT;
+                users_clock[connfd].timer=timer;
+                timer_lst.add_timer(timer);
+            }
+            else if((sockfd==pipefd[0])&&(events[i].events&EPOLLIN)){
+                int sig;
+                char signals[1024];
+                ret=recv(pipefd[0],signals,sizeof(signals),0);
+                if(ret==-1){
+                    continue;
+                }
+                else if(ret==0){
+                    continue;
+                }
+                else{
+                    for(int i=0;i<ret;++i){
+                        switch(signals[i]){
+                            case SIGALRM:
+                                {
+                                    timeout=true;
+                                    break;
+                                }
+                            case SIGTERM:
+                                stop_server=true;
+                        }
+                    }
+                }
             }
             else if(events[i].events & (EPOLLRDHUP | EPOLLHUP|EPOLLERR))
             {
                 users[sockfd].close_conn();
+                util_timer *timer=users_clock[sockfd].timer;
+                if(timer)
+                    timer_lst.del_timer(timer);
+
             }
             else if(events[i].events&EPOLLIN)
             {
+                util_timer *timer=users_clock[sockfd].timer;
                 if(users[sockfd].read()){
                     pool->append(users+sockfd);
+                    time_t cur=time(NULL);
+                    timer->expire=cur+3*TIMESLOT;
+                    printf("adjust time once\n");
+                    timer_lst.adjust_timer(timer);
                 }
                 else
                 {
                     users[sockfd].close_conn();
+                    if(timer)
+                    timer_lst.del_timer(timer);
                 }
             }
             else if(events[i].events&EPOLLOUT)
             {
                 
                 if(!users[sockfd].write())
+                {
                     users[sockfd].close_conn();
+                    util_timer *timer=users_clock[sockfd].timer;
+                    if(timer)
+                    timer_lst.del_timer(timer);
+                }
             }
             else
             {
             }
         }
+        if(timeout){
+            timer_handler();
+            timeout=false;
+        }
     }
     close(epollfd);
     close(listenfd);
+    close(pipefd[1]);
+    close(pipefd[0]);
+    delete [] users_clock;
     delete [] users;
     delete pool;
     return 0;
