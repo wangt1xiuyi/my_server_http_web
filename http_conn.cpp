@@ -1,4 +1,5 @@
 #include"http_conn.h"
+#include"log.h"
 const char* ok_200_title="OK";
 const char* error_400_title="Bad Request";
 const char* error_400_form="Your request has bad syntax or is inherently impossible to staisfy.\n";
@@ -192,7 +193,9 @@ http_conn::HTTP_CODE http_conn::parse_headers(char *text)
         m_host=text;
     }
     else
-        printf("oop!unknow header: %s\n",text);
+       // printf("oop!unknow header: %s\n",text);
+       LOG_INFO("oop!unknow header: %s\n",text);
+       Log::get_instance()->flush();
     return NO_REQUEST;
 }
 http_conn::HTTP_CODE http_conn::parse_content(char *text)
@@ -212,7 +215,9 @@ http_conn::HTTP_CODE http_conn::process_read()
     {
         text=get_line();
         m_start_line=m_checked_idx;
-        printf("got 1 http line:%s\n",text);
+       // printf("got 1 http line:%s\n",text);
+       LOG_INFO("got 1 http line:%s",text);
+       Log::get_instance()->flush();
         switch(m_check_state)
         {
             case CHECK_STATE_REQUESTLINE:
@@ -252,6 +257,9 @@ http_conn::HTTP_CODE http_conn::do_request()
     strcpy(m_real_file,doc_root);
     int len=strlen(doc_root);
     strncpy(m_real_file+len,m_url,FILENAME_LEN-len-1);
+    //printf("%s\n",m_real_file);
+    LOG_INFO("the request file:%s",m_real_file);
+    Log::get_instance()->flush();
     if(stat(m_real_file,&m_file_stat)<0)
         return NO_RESOURCE;
     if(!(m_file_stat.st_mode&S_IROTH))
@@ -285,7 +293,9 @@ bool http_conn::write()
     while(1)
     {
         temp=writev(m_sockfd,m_iv,m_iv_count);
-        printf("temp:%d\n",temp);
+        // printf("temp:%d\n",temp);
+        LOG_INFO("the length has been send:%d",temp);
+        Log::get_instance()->flush();
         if(temp<=-1)
         {
             if(errno==EAGAIN)
@@ -326,7 +336,9 @@ bool http_conn::add_response(const char* format,...)
         return false;
     m_write_idx+=len;
     va_end(arg_list);
-    printf("%s\n",m_write_buf);
+    //printf("%s\n",m_write_buf);
+    LOG_INFO("the Server response:%s",m_write_buf);
+    Log::get_instance()->flush();
     return true;
 }
 bool http_conn::add_status_line(int status,const char* title)

@@ -36,6 +36,9 @@ class http_conn{
         void process();
         bool read();
         bool write();
+        sockaddr_in *get_address(){
+            return &m_address;
+        }
     private:
         void init();
         HTTP_CODE process_read();

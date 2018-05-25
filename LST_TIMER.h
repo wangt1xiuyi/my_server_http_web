@@ -3,6 +3,7 @@
 #include<time.h>
 #include<sys/socket.h>
 #include<stdio.h>
+#include"log.h"
 #define BUFFER_SIZE 64
 class util_timer;
 struct client_data{
@@ -102,9 +103,11 @@ class sort_timer_lst
         {
             return;
         }
-        printf("timer tick\n");
+        //prntf("timer tick\n");
         time_t cur=time(NULL);
         util_timer *tmp=head;
+        LOG_INFO("timer tick(%s)",ctime(&cur));
+        Log::get_instance()->flush();
         while(tmp){
             if(cur<tmp->expire)
                 break;

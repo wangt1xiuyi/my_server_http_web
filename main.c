@@ -13,7 +13,8 @@
 #include"threadpool.h"
 #include"http_conn.h"
 #include"LST_TIMER.h"
-#define TIMESLOT 10
+#include"log.h"
+#define TIMESLOT 5
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
 extern int addfd(int epollfd,int fd,bool one_shot);
@@ -47,16 +48,20 @@ void cb_func(client_data* user_data){
     epoll_ctl(epollfd,EPOLL_CTL_DEL,user_data->sockfd,0);
     assert(user_data);
     close(user_data->sockfd);
-    printf("close fd %d\n",user_data->sockfd);
+   // printf("close fd %d\n",user_data->sockfd);
+   LOG_INFO("Server close client from:%s(because of don't send anything for long time))",inet_ntoa(user_data->address->sin_addr));
+   Log::get_instance()->flush();
 }
 void show_error(int connfd,const char* info)
 {
-    printf("%s",info);
+   // printf("%s",info);
     send(connfd,info,strlen(info),0);
     close(connfd);
 }
 int main(int argc,char *argv[])
 {
+   //Log::get_instance()->init("./mylog.log",8192,2000000,10);//异步日志模型
+    Log::get_instance()->init("./mylog.log",8192,2000000,0);//同步日志模型
     if(argc<=2)
     {
         printf("usage: %s ip_address port_number\n",basename(argv[0]));
@@ -111,7 +116,8 @@ int main(int argc,char *argv[])
         int number=epoll_wait(epollfd,events,MAX_EVENT_NUMBER,-1);
         if(number<0&&errno!=EINTR)
         {
-            printf("epoll failure\n");
+            //printf("epoll failure\n");
+            LOG_ERROR("%s","epoll failure");
             break;
         }
         for(int i=0;i<number;i++)
@@ -124,16 +130,21 @@ int main(int argc,char *argv[])
                 int connfd=accept(listenfd,(struct sockaddr*)&client_address,&client_addrlength);
                 if(connfd<0)
                 {
-                    printf("errno is:%d\n",errno);
+                    //printf("errno is:%d\n",errno);
+                    Log::get_instance()->write_log(3,"%s:errno is:%d","accept error",errno);//日志的另一种调用形式
                     continue;
                 }
                 if(http_conn::m_user_count>=MAX_FD)
                 {
                     show_error(connfd,"Internal server busy");
+                    LOG_ERROR("%s","Internal server busy");
                     continue;
                 }
                 users[connfd].init(connfd,client_address);
                 users_clock[connfd].sockfd=connfd;
+                users_clock[connfd].address=&client_address;
+                LOG_INFO("Connect from ip address:%s",inet_ntoa(client_address.sin_addr));
+                Log::get_instance()->flush();
                 util_timer* timer=new util_timer;
                 timer->user_data=&users_clock[connfd];
                 timer->cb_func=cb_func;
@@ -169,6 +180,8 @@ int main(int argc,char *argv[])
             else if(events[i].events & (EPOLLRDHUP | EPOLLHUP|EPOLLERR))
             {
                 users[sockfd].close_conn();
+                LOG_ERROR("EPOLL ERROR:close client connection(%s)",inet_ntoa(users[sockfd].get_address()->sin_addr));
+                Log::get_instance()->flush();
                 util_timer *timer=users_clock[sockfd].timer;
                 if(timer)
                     timer_lst.del_timer(timer);
@@ -178,15 +191,24 @@ int main(int argc,char *argv[])
             {
                 util_timer *timer=users_clock[sockfd].timer;
                 if(users[sockfd].read()){
+                    LOG_INFO("deal with the client(%s)",inet_ntoa(users[sockfd].get_address()->sin_addr));
+                    Log::get_instance()->flush();
                     pool->append(users+sockfd);
                     time_t cur=time(NULL);
+                    time_t temp;
+                    time(&temp);
                     timer->expire=cur+3*TIMESLOT;
-                    printf("adjust time once\n");
+                   // printf("adjust time once\n");
+                    LOG_INFO("adjust time once(%s)",ctime(&cur));
+                    Log::get_instance()->flush();
                     timer_lst.adjust_timer(timer);
                 }
                 else
                 {
+                    
                     users[sockfd].close_conn();
+                    LOG_INFO("client(%s) closes the connection normal",inet_ntoa(users[sockfd].get_address()->sin_addr));
+                    Log::get_instance()->flush();
                     if(timer)
                     timer_lst.del_timer(timer);
                 }
@@ -197,6 +219,8 @@ int main(int argc,char *argv[])
                 if(!users[sockfd].write())
                 {
                     users[sockfd].close_conn();
+                    LOG_ERROR("ERROR:write message to the client(%s)",inet_ntoa(users[sockfd].get_address()->sin_addr));
+                    Log::get_instance()->flush();
                     util_timer *timer=users_clock[sockfd].timer;
                     if(timer)
                     timer_lst.del_timer(timer);
