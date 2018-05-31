@@ -17,6 +17,7 @@
 #include<sys/mman.h>
 #include<stdarg.h>
 #include<errno.h>
+#include<sys/wait.h>
 #include"locker.h"
 class http_conn{
     public:
@@ -34,7 +35,7 @@ class http_conn{
         void init(int sockfd,const sockaddr_in &addr);
         void close_conn(bool real_close=true);
         void process();
-        bool read();
+        bool read_1();
         bool write();
         sockaddr_in *get_address(){
             return &m_address;
@@ -81,5 +82,7 @@ class http_conn{
         struct stat m_file_stat;
         struct iovec m_iv[2];
         int m_iv_count;
+        int cgi;//是否启用的POST
+        char *m_string;//存储请求头数据
 };
 #endif

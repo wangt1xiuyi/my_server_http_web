@@ -1,2 +1,10 @@
-main:log.cpp log.h block_queue.h main.c threadpool.h LST_TIMER.h http_conn.cpp http_conn.h
-	g++ -g -o main log.cpp log.h block_queue.h main.c threadpool.h LST_TIMER.h http_conn.h http_conn.cpp -lpthread
+main:log.o main.o LST_TIMER.h block_queue.h threadpool.h http_conn.o
+	g++ -o main log.o main.o LST_TIMER.h block_queue.h threadpool.h http_conn.o -lpthread
+main.o:
+	g++ -c main.c
+log.o:log.cpp log.h
+	g++ -c log.cpp log.h
+http_conn.o:http_conn.cpp http_conn.h
+	g++ -c http_conn.cpp http_conn.h
+clean:
+	rm -rf *.o *.h.gch

@@ -9,7 +9,7 @@ const char* error_404_title="Not Found";
 const char* error_404_form="The requested file was not found on this server.\n";
 const char* error_500_title="Internal Error";
 const char* error_500_form="There was an unusual problem serving the request file.\n";
-const char* doc_root="/var/www/html";
+const char* doc_root="./htdocs";
 int setnonblocking(int fd){
     int old_option=fcntl(fd,F_GETFL);
     int new_option=old_option | O_NONBLOCK;
@@ -72,6 +72,7 @@ void http_conn::init()
     m_checked_idx=0;
     m_read_idx=0;
     m_write_idx=0;
+    cgi=0;
     memset(m_read_buf,'\0',READ_BUFFER_SIZE);
     memset(m_write_buf,'\0',WRITE_BUFFER_SIZE);
     memset(m_real_file,'\0',FILENAME_LEN);
@@ -105,7 +106,7 @@ http_conn::LINE_STATUS http_conn::parse_line()
     }
         return LINE_OPEN;
 }
-bool http_conn::read()
+bool http_conn::read_1()
 {
     if(m_read_idx>=READ_BUFFER_SIZE)
     {
@@ -140,6 +141,11 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     char *method=text;
     if(strcasecmp(method,"GET")==0)
         m_method=GET;
+    else if(strcasecmp(method,"POST")==0)
+    {
+        m_method=POST;
+        cgi=1;
+    }
     else
         return BAD_REQUEST;
     m_url+=strspn(m_url," \t");
@@ -157,6 +163,8 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     }
     if(!m_url||m_url[0]!='/')
         return BAD_REQUEST;
+    if(strlen(m_url)==1)
+        strcat(m_url,"index.html");
     m_check_state=CHECK_STATE_HEADER;
     return NO_REQUEST;
 }
@@ -196,12 +204,13 @@ http_conn::HTTP_CODE http_conn::parse_headers(char *text)
        // printf("oop!unknow header: %s\n",text);
        LOG_INFO("oop!unknow header: %s\n",text);
        Log::get_instance()->flush();
-    return NO_REQUEST;
+       return NO_REQUEST;
 }
 http_conn::HTTP_CODE http_conn::parse_content(char *text)
 {
     if(m_read_idx>=(m_content_length+m_checked_idx)){
         text[m_content_length]='\0';
+        m_string=text;
         return GET_REQUEST;
     }
     return NO_REQUEST;
@@ -256,6 +265,52 @@ http_conn::HTTP_CODE http_conn::do_request()
 {
     strcpy(m_real_file,doc_root);
     int len=strlen(doc_root);
+    if(cgi==1)
+    {
+        strncpy(m_real_file+len,m_url,FILENAME_LEN-len-1);
+        char name[100],password[100];
+        int i;
+        for(i=5;m_string[i]!='&';++i)
+            name[i-5]=m_string[i];
+        name[i-5]='\0';
+        int j=0;
+        for(i=i+10;m_string[i]!='\0';++i,++j)
+            password[j]=m_string[i];
+        password[j]='\0';
+        pid_t pid;
+        int pipefd[2];
+        if(pipe(pipefd)<0)
+        {
+            LOG_ERROR("pipe() error:%d",4);
+            return BAD_REQUEST;
+        }
+        if((pid=fork())<0)
+        {
+            LOG_ERROR("fork() error:%d",3);
+            return BAD_REQUEST;
+        }
+        if(pid==0)
+        {
+            dup2(pipefd[1],1);
+            close(pipefd[0]);
+            execl(m_real_file,m_real_file,name,password,NULL);
+        }
+        else{
+            close(pipefd[1]);
+            char result;
+            int ret=read(pipefd[0],&result,1);
+            if(ret!=1)
+            {
+                LOG_ERROR("read error:ret=%d",ret);
+                return BAD_REQUEST;
+            }
+            if(result=='1')
+                m_url="/welcome.html";
+            else
+                m_url="/error.html";
+            waitpid(pid,0,NULL);
+        }
+    }
     strncpy(m_real_file+len,m_url,FILENAME_LEN-len-1);
     //printf("%s\n",m_real_file);
     LOG_INFO("the request file:%s",m_real_file);

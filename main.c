@@ -14,7 +14,7 @@
 #include"http_conn.h"
 #include"LST_TIMER.h"
 #include"log.h"
-#define TIMESLOT 5
+#define TIMESLOT 20
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
 extern int addfd(int epollfd,int fd,bool one_shot);
@@ -62,13 +62,12 @@ int main(int argc,char *argv[])
 {
    //Log::get_instance()->init("./mylog.log",8192,2000000,10);//异步日志模型
     Log::get_instance()->init("./mylog.log",8192,2000000,0);//同步日志模型
-    if(argc<=2)
+    if(argc<=1)
     {
         printf("usage: %s ip_address port_number\n",basename(argv[0]));
         return 1;
     }
-    const char* ip=argv[1];
-    int port=atoi(argv[2]);
+    int port=atoi(argv[1]);
     addsig(SIGPIPE,SIG_IGN);
     threadpool<http_conn>* pool=NULL;
     try
@@ -89,7 +88,7 @@ int main(int argc,char *argv[])
     struct sockaddr_in address;
     bzero(&address,sizeof(address));
     address.sin_family=AF_INET;
-    inet_pton(AF_INET,ip,&address.sin_addr);
+    address.sin_addr.s_addr=htonl(INADDR_ANY);
     address.sin_port=htons(port);
     ret=bind(listenfd,(struct sockaddr*)&address,sizeof(address));
     assert(ret>=0);
@@ -190,7 +189,7 @@ int main(int argc,char *argv[])
             else if(events[i].events&EPOLLIN)
             {
                 util_timer *timer=users_clock[sockfd].timer;
-                if(users[sockfd].read()){
+                if(users[sockfd].read_1()){
                     LOG_INFO("deal with the client(%s)",inet_ntoa(users[sockfd].get_address()->sin_addr));
                     Log::get_instance()->flush();
                     pool->append(users+sockfd);
@@ -198,7 +197,6 @@ int main(int argc,char *argv[])
                     time_t temp;
                     time(&temp);
                     timer->expire=cur+3*TIMESLOT;
-                   // printf("adjust time once\n");
                     LOG_INFO("adjust time once(%s)",ctime(&cur));
                     Log::get_instance()->flush();
                     timer_lst.adjust_timer(timer);
